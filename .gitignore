@@ -1,0 +1,86 @@
+# Environment variables
+.env
+.env.local
+.env.*
+!.env.example
+*.env
+*.key
+*.p12
+*.pfx
+
+# VAPID keys — never commit these
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments (using .venv)
+.venv/
+venv/
+ENV/
+env/
+
+# ChromaDB
+chroma_db/
+chromadb_data/
+*.chroma
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+kai.db
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# MCP
+.mcp.json
+
+# Temporary files
+*.tmp
+temp/
+tmp/
+
+# Private evaluation output and local agent/tool state
+benchmark_out/
+pipeline_benchmark_out/
+.claude/
+.codex/
+
+# Model checkpoints (too large for GitHub - downloaded during setup)
+models/sam2/*.pt

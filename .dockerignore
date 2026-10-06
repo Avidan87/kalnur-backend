@@ -1,0 +1,54 @@
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Environment & secrets
+.env
+
+# Old local databases (now using Supabase)
+*.db
+*.sqlite3
+chromadb_data/
+
+# IDE
+.idea/
+.cursor/
+.claude/
+.vscode/
+
+# Logs
+*.log
+
+# Documentation (not needed at runtime)
+docs/
+ARCHITECTURE.md
+README.md
+CLAUDE.md
+claude.md
+
+# Scripts (not needed at runtime)
+scripts/
+reinitialize_chromadb.py
+supabase_migration.sql
+
+# MiDaS MCP server (deployed separately on Railway)
+midas-mcp-server/
+start_server.py
+railway.toml
+
+# Migration files (not needed at runtime)
+kai/database/migrations/
+
+# Knowledge base ingestion scripts (not needed at runtime)
+knowledge-base/ingestion/
