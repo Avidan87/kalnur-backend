@@ -1,7 +1,13 @@
-# Kalnur Backend
+# Kalnur Backend 🥗
 
 > A self-hostable AI nutrition backend for photo-based food logging, designed
 > around Nigerian meals, nutrition data, and health goals.
+
+**This repository is the open backend reference implementation of
+[Kalnur](https://kalnur.com)** — the mother product where the full Kalnur
+experience lives. Visit [kalnur.com](https://kalnur.com) to experience the
+product. This repository exists so developers can study, run, and extend the
+technical system using their own infrastructure and provider keys.
 
 Kalnur turns a meal photo into structured food items, estimated portions,
 16-nutrient totals, and goal-aware coaching. This repository is the backend
@@ -23,20 +29,50 @@ and (for image portions) Modal endpoints.
 - Docker deployment configuration and Modal workers for SAM 2 segmentation and
   Depth Anything V2 portion support.
 
-## How the system works
+## How the system works 🧭
 
-```text
-Meal photo
-  -> vision model identifies foods and cooking context
-  -> segmentation separates measurable items
-  -> depth model estimates portion geometry
-  -> Nigerian-food knowledge base matches and scales nutrients
-  -> authenticated API saves the meal and returns coaching context
+```mermaid
+flowchart LR
+    Client[Native or web client] --> API[FastAPI API]
+    API --> Auth[Supabase Auth\nuser-scoped access]
+    API --> Orchestrator[Food logging orchestration]
+    Orchestrator --> Vision[Vision model\nfood + cooking context]
+    Vision --> Segment[Segmentation service\nmeasurable food regions]
+    Segment --> Depth[Depth service\nportion geometry]
+    Depth --> Knowledge[Nigerian-food knowledge\nmatching + nutrient scaling]
+    Knowledge --> Meals[(Supabase\nmeals + nutrition)]
+    Meals --> Coach[Kally coaching context]
+    Coach --> API
 ```
 
 This is an orchestrated AI workflow. Image analysis and nutrition retrieval are
 specialised stages with explicit inputs and outputs; Kally is the conversational
 coaching component that uses the resulting user context.
+
+### Agentic orchestration
+
+```mermaid
+flowchart TD
+    Request[Authenticated request] --> Router{Request type}
+    Router -->|Log a meal| FoodFlow[Food logging flow]
+    Router -->|Ask a nutrition question| Kally[Kally coaching agent]
+
+    FoodFlow --> Detect[Detect foods + context]
+    Detect --> Measure[Segment + estimate portions]
+    Measure --> Ground[Match to Nigerian-food records]
+    Ground --> Calculate[Calculate 16 nutrients]
+    Calculate --> Save[Save user-scoped meal]
+    Save --> Kally
+
+    Kally --> History[Read meal history + goals]
+    History --> Guidance[Return goal-aware guidance]
+```
+
+The orchestration is deliberately staged rather than a single opaque model call:
+each step can be inspected, swapped, timed, and evaluated independently.
+
+For the current engineering evaluation of the two vision/segmentation paths,
+read [the evaluation report](docs/evaluations/pipeline-evaluation.md). 📊
 
 ## Before you start
 
@@ -116,6 +152,10 @@ SAM_SEGMENTATION_URL=
 DEPTH_ESTIMATION_URL=
 ```
 
+For the optional comparison route, set `SAM3_SEGMENTATION_URL` as well. The
+evaluation keeps this alternative explicit rather than silently sending both
+vision models through the same segmentation service.
+
 The `modal/` directory contains the reference Modal applications. Configure
 their provider secrets in Modal, deploy them to your account, and place only
 your resulting endpoint URLs in `.env`. Do not make paid GPU endpoints openly
@@ -146,7 +186,7 @@ not be exposed as a public demo endpoint.
 
 Read [SECURITY.md](SECURITY.md) before deploying a public instance.
 
-## Current model work
+## Current model work 🔬
 
 The stable code path uses GPT-4o for vision, SAM 2 for segmentation, and Depth
 Anything V2 for portion support. Kalnur also has an ongoing evaluation track for
@@ -154,6 +194,11 @@ Claude on Bedrock and text-prompted SAM 3. These experiments are not presented
 as production accuracy claims: a labelled, weighed Nigerian-meal dataset is
 needed to validate food detection, portion error, calorie error, cost, and
 latency before promotion.
+
+The public evaluation report records the observed engineering behaviour,
+including an identified and corrected double-counting failure. It does **not**
+claim that either pipeline is more nutritionally accurate without weighed
+ground truth.
 
 ## Contributing
 

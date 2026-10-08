@@ -1,8 +1,8 @@
 """
 Vision Benchmark CLI Runner
 
-Runs side-by-side benchmark of Claude Sonnet 4.6 (AWS Bedrock) vs OpenAI GPT-4o
-across the entire Kalnur food logging pipeline with Supabase database matching.
+Runs the two approved Kalnur pipeline pairings side by side:
+Claude Sonnet 4.6 (AWS Bedrock) + SAM 3, and GPT-4o + SAM 2.
 
 Usage:
   python scripts/benchmark_vision.py --image path/to/food.jpg --meal-type lunch
@@ -25,7 +25,7 @@ def format_table_row(col1: str, col2: str, col3: str, width: int = 26) -> str:
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Run Vision Benchmark (Claude Sonnet 4.6 vs GPT-4o)")
+    parser = argparse.ArgumentParser(description="Run pipeline benchmark (Claude + SAM 3 vs GPT-4o + SAM 2)")
     parser.add_argument("--image", required=True, help="Path to local image file (JPEG, PNG, WebP)")
     parser.add_argument("--meal-type", default="lunch", help="Meal type (breakfast, lunch, dinner, snack)")
     parser.add_argument("--note", default=None, help="Optional user context note")
@@ -41,7 +41,7 @@ async def main():
         image_bytes = f.read()
 
     print("\n" + "=" * 84)
-    print("🍲 KALNUR VISION BENCHMARK: CLAUDE SONNET 4.6 (BEDROCK) vs OPENAI GPT-4o")
+    print("🍲 KALNUR PIPELINE BENCHMARK: CLAUDE SONNET 4.6 + SAM 3 vs GPT-4o + SAM 2")
     print("=" * 84)
     print(f"📁 Image: {args.image} ({len(image_bytes) / 1024:.1f} KB)")
     print(f"🍽️  Meal Type: {args.meal_type}")
@@ -59,17 +59,17 @@ async def main():
     analysis = report.get("benchmark_analysis", {})
 
     print("\n" + "-" * 84)
-    print(format_table_row("METRIC", "CLAUDE SONNET 4.6 (BEDROCK)", "OPENAI GPT-4o"))
+    print(format_table_row("METRIC", "CLAUDE SONNET 4.6 + SAM 3", "GPT-4o + SAM 2"))
     print("-" * 84)
 
     # Latency & Cost
     c_lat = f"{claude.get('latency_ms', 0)} ms" if not claude.get("error") else "FAILED"
     g_lat = f"{gpt4o.get('latency_ms', 0)} ms" if not gpt4o.get("error") else "FAILED"
-    print(format_table_row("Inference Latency", c_lat, g_lat))
+    print(format_table_row("End-to-end latency", c_lat, g_lat))
 
     c_cost = f"${claude.get('estimated_cost_usd', 0.0):.6f}" if not claude.get("error") else "N/A"
     g_cost = f"${gpt4o.get('estimated_cost_usd', 0.0):.6f}" if not gpt4o.get("error") else "N/A"
-    print(format_table_row("API Cost per Scan", c_cost, g_cost))
+    print(format_table_row("Vision API estimated cost", c_cost, g_cost))
 
     c_tokens = f"In: {claude.get('input_tokens',0)} | Out: {claude.get('output_tokens',0)}" if not claude.get("error") else "N/A"
     g_tokens = f"In: {gpt4o.get('input_tokens',0)} | Out: {gpt4o.get('output_tokens',0)}" if not gpt4o.get("error") else "N/A"
@@ -92,7 +92,7 @@ async def main():
 
     # Food item breakdown
     print("\n🍲 DETECTED DISHES & OCCLUSION REASONING:")
-    print("\n--- CLAUDE SONNET 4.6 (BEDROCK) ---")
+    print("\n--- CLAUDE SONNET 4.6 + SAM 3 ---")
     if claude.get("error"):
         print(f"❌ Error: {claude.get('error')}")
     else:
@@ -103,7 +103,7 @@ async def main():
             if f.get("submerged_reasoning"):
                 print(f"    Reasoning: {f['submerged_reasoning']}")
 
-    print("\n--- OPENAI GPT-4o ---")
+    print("\n--- GPT-4o + SAM 2 ---")
     if gpt4o.get("error"):
         print(f"❌ Error: {gpt4o.get('error')}")
     else:

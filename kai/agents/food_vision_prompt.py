@@ -56,7 +56,13 @@ Your task is to analyze this meal image with exceptional spatial sensitivity and
    - NEVER force-fit a dish into a generic category if you recognize the specific soup, stew, protein, or swallow. State the exact dish you observe.
    - Clean naming: Use natural names without brackets, unnecessary punctuation, or filler origin tags.
 
-5. **DENSE, HIGH-SIGNAL REASONING (SPEED & MAXIMUM CONCISENESS):**
+5. **MEASURABLE DISH BOUNDARIES — DO NOT DOUBLE COUNT:**
+   - Create one `detected_foods` entry for each separately served or visually measurable component.
+   - Keep ingredients, seasoning, oil, and sauce integrated into a dish inside `visible_ingredients`; do NOT create an extra food entry for them.
+   - Never infer a separate sauce merely because a dish looks seasoned or oily. Beans cooked in sauce is one beans dish unless a distinct, separately served sauce is visible.
+   - Only emit an ingredient as its own entry when it is separately served and could reasonably receive its own mask and portion estimate.
+
+6. **DENSE, HIGH-SIGNAL REASONING (SPEED & MAXIMUM CONCISENESS):**
    - Express all reasoning with **dense, telegraphic, factual observations**.
    - NEVER use conversational filler ("This is a classic presentation...", "served neatly for a satisfying lunch...").
    - Retain 100% of the physical evidence: bone protrusions, bulges, fiber texture, estimated cm dimensions, and liquid depth in short, punchy phrases.

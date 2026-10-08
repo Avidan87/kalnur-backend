@@ -1,18 +1,18 @@
 """
-Vision Engine Benchmark Service with Modal SAM 2 & Depth Anything V2
+Vision Engine Benchmark Service with paired segmenters and Depth Anything V2
 
 Orchestrates a comprehensive, fair, side-by-side benchmark between:
-1. Anthropic Claude Sonnet 4.6 on AWS Bedrock
-2. OpenAI GPT-4o
+1. Anthropic Claude Sonnet 4.6 on AWS Bedrock + SAM 3
+2. OpenAI GPT-4o + SAM 2
 
 Executes the ENTIRE Kalnur 3D food logging pipeline for both models:
 - Identical spatial vision prompt with occlusion, submerged items, vessel depth & oil analysis
-- Modal GPU SAM 2 (Segment Anything) pixel mask segmentation
+- The configured paired Modal segmenter (SAM 3 or SAM 2) pixel mask stage
 - Modal GPU Depth Anything V2 3D volumetric depth portion calculation
 - Supabase live database matching (134+ enriched Nigerian foods + pgvector)
 - Complete 16-nutrient breakdown calculation
 - Submerged food occlusion analysis and caloric discrepancy calculation
-- Complete end-to-end latency breakdown: Vision (ms) + SAM 2 (ms) + Depth (ms)
+- Complete end-to-end latency breakdown: Vision (ms) + paired segmentation (ms) + Depth (ms)
 """
 
 import asyncio
@@ -42,15 +42,24 @@ NUTRIENT_FIELDS = [
 ]
 
 
+def _decode_mask_payload(mask_payload: Any) -> np.ndarray:
+    """Decode legacy JSON boolean masks and the newer PNG/base64 payload."""
+    if isinstance(mask_payload, str):
+        decoded = base64.b64decode(mask_payload)
+        return np.asarray(Image.open(io.BytesIO(decoded)).convert("L")) > 127
+    return np.asarray(mask_payload, dtype=bool)
+
+
 class VisionBenchmarkService:
-    """End-to-End Benchmark Service for Vision Models with Modal GPU SAM 2 & Depth Anything."""
+    """End-to-end comparison of the two approved Kalnur pipeline pairings."""
 
     def __init__(self):
         self.bedrock_client = BedrockClaudeVisionClient()
         self.openai_client = OpenAIVisionClient()
         self.supabase = get_supabase()
         self.vector_db = NigerianFoodVectorDB()
-        self.sam_url = os.getenv("SAM_SEGMENTATION_URL")
+        self.sam2_url = os.getenv("SAM_SEGMENTATION_URL")
+        self.sam3_url = os.getenv("SAM3_SEGMENTATION_URL")
         self.depth_client = get_depth_client()
 
     async def _run_sam_and_depth(
@@ -58,19 +67,24 @@ class VisionBenchmarkService:
         image_base64: str,
         image_bytes: bytes,
         detected_foods_raw: List[Dict[str, Any]],
+        segmenter_name: str,
+        segmenter_url: Optional[str],
     ) -> Tuple[List[Dict[str, Any]], int, int, Dict[str, Any]]:
         """
-        Runs Modal GPU SAM 2 segmentation + Depth Anything V2 3D volume estimation.
+        Runs the paired segmentation stage + Depth Anything V2 volume estimation.
         Returns:
             (updated_foods_list, sam_latency_ms, depth_latency_ms, debug_meta)
         """
         sam_latency_ms = 0
         depth_latency_ms = 0
         debug_meta = {
-            "sam_used": False,
+            "segmenter": segmenter_name,
+            "segmentation_used": False,
             "depth_used": False,
             "segmented_items": 0,
             "depth_items": 0,
+            "coverage": None,
+            "fallback_reason": None,
         }
 
         if not detected_foods_raw:
@@ -78,28 +92,37 @@ class VisionBenchmarkService:
 
         food_names = [f.get("name") for f in detected_foods_raw if f.get("name")]
 
-        # Step 1: Run SAM 2 on Modal GPU if 2+ foods
+        # Step 1: Run the paired segmenter when it can separate 2+ foods.
         food_masks = {}
-        if len(food_names) >= 2 and self.sam_url:
+        if len(food_names) >= 2 and segmenter_url:
             sam_start = time.perf_counter()
             try:
-                logger.info("🔬 Calling Modal SAM 2 GPU for %d foods: %s", len(food_names), food_names)
-                async with httpx.AsyncClient(timeout=35.0) as client:
+                logger.info("🔬 Calling %s for %d foods: %s", segmenter_name, len(food_names), food_names)
+                async with httpx.AsyncClient(timeout=120.0) as client:
                     resp = await client.post(
-                        f"{self.sam_url.rstrip('/')}/segment",
+                        f"{segmenter_url.rstrip('/')}/segment",
                         json={"image_base64": image_base64, "food_names": food_names},
                     )
                     resp.raise_for_status()
                     sam_data = resp.json()
                     raw_masks = sam_data.get("masks", {})
-                    food_masks = {name: np.array(mask, dtype=bool) for name, mask in raw_masks.items()}
+                    food_masks = {
+                        str(name).strip().casefold(): _decode_mask_payload(mask)
+                        for name, mask in raw_masks.items()
+                    }
+                    debug_meta["coverage"] = sam_data.get("coverage")
                 sam_latency_ms = int((time.perf_counter() - sam_start) * 1000)
-                debug_meta["sam_used"] = True
+                debug_meta["segmentation_used"] = True
                 debug_meta["segmented_items"] = len(food_masks)
-                logger.info("✅ SAM 2 finished in %d ms (masks: %d)", sam_latency_ms, len(food_masks))
+                logger.info("✅ %s finished in %d ms (masks: %d)", segmenter_name, sam_latency_ms, len(food_masks))
             except Exception as e:
                 sam_latency_ms = int((time.perf_counter() - sam_start) * 1000)
-                logger.warning("⚠️ Modal SAM 2 call failed (%d ms): %s", sam_latency_ms, e)
+                debug_meta["fallback_reason"] = f"{segmenter_name} call failed: {e}"
+                logger.warning("⚠️ %s call failed (%d ms): %s", segmenter_name, sam_latency_ms, e)
+        elif len(food_names) < 2:
+            debug_meta["fallback_reason"] = "Segmentation skipped for a single detected food"
+        else:
+            debug_meta["fallback_reason"] = f"{segmenter_name} URL is not configured"
 
         # Step 2: Build Bounding Boxes for Depth Anything V2
         img = Image.open(io.BytesIO(image_bytes))
@@ -112,7 +135,7 @@ class VisionBenchmarkService:
         if food_masks:
             for idx, item in enumerate(detected_foods_raw):
                 name = item.get("name")
-                mask = food_masks.get(name)
+                mask = food_masks.get(str(name).strip().casefold()) if name else None
                 if mask is not None and np.any(mask):
                     ys, xs = np.where(mask)
                     x1, x2 = int(np.min(xs)), int(np.max(xs))
@@ -121,11 +144,9 @@ class VisionBenchmarkService:
                     bboxes.append((x1, y1, x2, y2))
                     depth_food_types.append(name)
         else:
-            # Fallback grid bboxes if SAM 2 skipped or failed
-            for idx, item in enumerate(detected_foods_raw):
-                food_idx_to_batch[idx] = len(bboxes)
-                bboxes.append((0, 0, img_width, img_height))
-                depth_food_types.append(item.get("name", "food"))
+            # A failed segmentation must not manufacture a full-plate estimate
+            # for every detected food; that would create duplicate portions.
+            debug_meta["fallback_reason"] = debug_meta["fallback_reason"] or "No non-empty masks returned"
 
         # Step 3: Run Depth Anything V2 on Modal GPU
         depth_results = []
@@ -226,7 +247,10 @@ class VisionBenchmarkService:
 
         for item in detected_foods_raw:
             raw_name = item.get("name", "Unknown Food")
-            estimated_g = item.get("estimated_grams") or 150.0
+            try:
+                estimated_g = float(item.get("estimated_grams") or 150.0)
+            except (TypeError, ValueError):
+                estimated_g = 150.0
 
             # Match in Supabase
             sb_food, match_conf = await self._match_food_in_supabase(raw_name)
@@ -276,8 +300,7 @@ class VisionBenchmarkService:
         user_description: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Execute concurrent side-by-side benchmark across both models
-        with full Modal SAM 2 + Depth Anything V2 + Supabase pipeline.
+        Execute Claude + SAM 3 and GPT-4o + SAM 2 side by side.
         """
         pipeline_start = time.time()
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
@@ -298,7 +321,7 @@ class VisionBenchmarkService:
         claude_raw_res = results[0]
         gpt4o_raw_res = results[1]
 
-        # Step 2: Process Claude Sonnet 4.6 output through SAM 2 + Depth + Supabase
+        # Step 2: Claude is intentionally paired with SAM 3.
         if isinstance(claude_raw_res, Exception):
             claude_data = {
                 "model_name": "Claude Sonnet 4.6 (AWS Bedrock)",
@@ -312,11 +335,13 @@ class VisionBenchmarkService:
             claude_parsed = claude_raw_res.get("parsed_result", {})
             claude_foods_initial = claude_parsed.get("detected_foods", [])
 
-            # Run SAM 2 + Depth Anything V2 on Claude's detections
+            # Run SAM 3 + Depth Anything V2 on Claude's detections.
             claude_updated_foods, c_sam_ms, c_depth_ms, c_debug = await self._run_sam_and_depth(
                 image_base64=image_base64,
                 image_bytes=image_bytes,
                 detected_foods_raw=claude_foods_initial,
+                segmenter_name="SAM 3",
+                segmenter_url=self.sam3_url,
             )
 
             # Supabase nutrition pipeline
@@ -332,7 +357,8 @@ class VisionBenchmarkService:
                 "provider": claude_raw_res["provider"],
                 "latency_breakdown": {
                     "vision_inference_ms": claude_raw_res["latency_ms"],
-                    "sam2_segmentation_ms": c_sam_ms,
+                    "segmentation_ms": c_sam_ms,
+                    "segmentation_model": "SAM 3",
                     "depth_estimation_ms": c_depth_ms,
                     "supabase_nutrition_ms": c_sb_ms,
                     "total_end_to_end_ms": c_total_ms,
@@ -350,7 +376,7 @@ class VisionBenchmarkService:
                 "nutrients": claude_nutrients,
             }
 
-        # Step 3: Process OpenAI GPT-4o output through SAM 2 + Depth + Supabase
+        # Step 3: GPT-4o is intentionally paired with SAM 2.
         if isinstance(gpt4o_raw_res, Exception):
             gpt4o_data = {
                 "model_name": "OpenAI GPT-4o",
@@ -364,11 +390,13 @@ class VisionBenchmarkService:
             gpt4o_parsed = gpt4o_raw_res.get("parsed_result", {})
             gpt4o_foods_initial = gpt4o_parsed.get("detected_foods", [])
 
-            # Run SAM 2 + Depth Anything V2 on GPT-4o's detections
+            # Run SAM 2 + Depth Anything V2 on GPT-4o's detections.
             gpt4o_updated_foods, g_sam_ms, g_depth_ms, g_debug = await self._run_sam_and_depth(
                 image_base64=image_base64,
                 image_bytes=image_bytes,
                 detected_foods_raw=gpt4o_foods_initial,
+                segmenter_name="SAM 2",
+                segmenter_url=self.sam2_url,
             )
 
             # Supabase nutrition pipeline
@@ -384,7 +412,8 @@ class VisionBenchmarkService:
                 "provider": gpt4o_raw_res["provider"],
                 "latency_breakdown": {
                     "vision_inference_ms": gpt4o_raw_res["latency_ms"],
-                    "sam2_segmentation_ms": g_sam_ms,
+                    "segmentation_ms": g_sam_ms,
+                    "segmentation_model": "SAM 2",
                     "depth_estimation_ms": g_depth_ms,
                     "supabase_nutrition_ms": g_sb_ms,
                     "total_end_to_end_ms": g_total_ms,
@@ -450,7 +479,7 @@ class VisionBenchmarkService:
                 "claude_total_end_to_end_ms": c_latency,
                 "gpt4o_total_end_to_end_ms": g_latency,
                 "delta_ms": latency_delta_ms,
-                "faster_model": "Claude Sonnet 4.6" if c_latency < g_latency else "OpenAI GPT-4o",
+                "faster_model": "Claude Sonnet 4.6 + SAM 3" if c_latency < g_latency else "GPT-4o + SAM 2",
                 "claude_breakdown": claude.get("latency_breakdown"),
                 "gpt4o_breakdown": gpt4o.get("latency_breakdown"),
             },
@@ -458,7 +487,7 @@ class VisionBenchmarkService:
                 "claude_usd": c_cost,
                 "gpt4o_usd": g_cost,
                 "delta_usd": cost_delta_usd,
-                "cheaper_model": "Claude Sonnet 4.6" if c_cost < g_cost else "OpenAI GPT-4o",
+                "cheaper_model": "Claude Sonnet 4.6 + SAM 3" if c_cost < g_cost else "GPT-4o + SAM 2",
             },
             "occlusion_inference": {
                 "claude_submerged_detected": c_submerged_foods,
@@ -474,8 +503,8 @@ class VisionBenchmarkService:
                 "gpt4o_protein_g": g_prot,
                 "protein_delta_g": prot_diff,
                 "summary": (
-                    f"Claude detected {cal_diff:+.1f} kcal ({cal_pct_diff:+.1f}%) and "
-                    f"{prot_diff:+.1f}g protein compared to GPT-4o."
+                    f"Claude + SAM 3 produced {cal_diff:+.1f} kcal ({cal_pct_diff:+.1f}%) and "
+                    f"{prot_diff:+.1f}g protein compared to GPT-4o + SAM 2."
                 ),
             }
         }
