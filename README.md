@@ -9,7 +9,7 @@ experience lives. Visit [kalnur.com](https://kalnur.com) to experience the
 product. This repository exists so developers can study, run, and extend the
 technical system using their own infrastructure and provider keys.
 
-> 📱 **Try Kalnur on a phone for the intended experience.** The live product is
+> **Try Kalnur on a phone for the intended experience.** The live product is
 > designed first for the mobile flow, including photo-based food logging and
 > personalised coaching.
 
